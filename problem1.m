@@ -1,25 +1,49 @@
 
-function []=ex1()
-    %% 1. Lectura y preprocesado de la imagen
-    im = imread("images\evening\V01KHQ\2002.png");  % Carga la imagen
-    %figure('Name', 'Imagen original'), imshow(im);
-    
-    %% 2. Detección de la region de la matricula
-    imPlate = detectPlateRegionCE(im);
-      
-    %% 3. Extraer caracteres
-    charList = segmentCharacters(imPlate);
-    
+ex1("other", 1)
 
-    %% 4. Identificar caracteres
-    templates = loadTemplates('templates/problem1');
-    
-    plate = '';
-    for i = 1:length(charList)
-        plate = [plate matchCharacter(charList{i}, templates)];
+function []=ex1(mode, difficulty)
+
+    if(strcmp(mode, "live"))
+        cam1 = ipcam('http://10.112.11.211/video.mjpg', 'root', 'Vivotek1', 'Timeout', 10);
+        cam2 = ipcam('http://10.112.11.212/video.mjpg', 'root', 'Vivotek2', 'Timeout', 10);
+        cam3 = ipcam('http://10.112.11.213/video.mjpg', 'root', 'Vivotek3', 'Timeout', 10);
+        
+        filelist = [ snapshot(cam1) snapshot(cam2) snapshot(cam3)];
+    else
+        filelist = dir(fullfile('images/problem1.1', '**\*.*'));
+        filelist = filelist(~[filelist.isdir]);  % Borrar directorios
     end
-
-    plate
+    
+    %% 1. Lectura y preprocesado de la imagen
+    for i = 1:length(filelist)
+        file = filelist(i);
+        im = imread(fullfile(file.folder, file.name));
+        %figure('Name', 'Imagen original'), imshow(im);
+        
+        %% 2. Detección de la region de la matricula
+        imPlate = detectPlateRegionCE(im);
+          
+        %% 3. Extraer caracteres
+        charList = segmentCharacters(imPlate);
+    
+        %% 4. Identificar caracteres
+        templates = loadTemplates('templates/problem1');
+        
+        plate = length(charList);
+        recognisedCharacters = 0;
+        for j = 1:length(charList)
+            plate(j) = matchCharacter(charList{j}, templates);
+            if(plate(j) == file.name(j))
+                recognisedCharacters = recognisedCharacters + 1;
+            end
+        end
+        
+        disp([fullfile(file.folder, file.name) ':'])
+        disp([9 'Detected Plate: ' plate ' | Ground Truth: ' file.name ' | Recognised Characters ' num2str(recognisedCharacters)])
+    
+    end
+    
+    
 end
 
 
@@ -43,7 +67,7 @@ function imPlate = detectPlateRegionCE(im)
     
     %% 2. Eliminar artefactos pequeños
     imClean = bwpropfilt(imMasked, 'Area', 6); 
-    figure('Name', 'Imagen limpia'), imshow(imClean);
+    %figure('Name', 'Imagen limpia'), imshow(imClean);
 
     %% 3. Recortar la matricula
     [rows, cols] = find(imClean);

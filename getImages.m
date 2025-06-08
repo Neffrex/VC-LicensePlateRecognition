@@ -7,12 +7,12 @@ for camId = 1:3
     image = snapshot(camera);
     figure, imshow(image);
 
-    imgDir = strcat('images/',timeOfDay,'/',plates(:, camId));
+    imgDir = strcat('images/',timeOfDay,'/',datestr(now, 'HHMM'));
     if ~exist(imgDir, 'dir')
         mkdir(imgDir);
     end
 
-    imwrite(image, strcat(imgDir+'/'+datestr(now, 'HHMM')+'.png'))
+    imwrite(image, strcat(imgDir+'/'+plates(:, camId)+'.png'))
 end
 
 function s = getTimeOfDay()
