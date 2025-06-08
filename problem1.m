@@ -1,51 +1,52 @@
 
-ex1("other", 1)
+ex1(1, "other")
 
-function []=ex1(mode, difficulty)
+function []=ex1(difficulty, mode)
+    filelist = loadFiles(difficulty, mode);
+    templates = loadTemplates(difficulty);
 
-    if(strcmp(mode, "live"))
-        cam1 = ipcam('http://10.112.11.211/video.mjpg', 'root', 'Vivotek1', 'Timeout', 10);
-        cam2 = ipcam('http://10.112.11.212/video.mjpg', 'root', 'Vivotek2', 'Timeout', 10);
-        cam3 = ipcam('http://10.112.11.213/video.mjpg', 'root', 'Vivotek3', 'Timeout', 10);
-        
-        filelist = [ snapshot(cam1) snapshot(cam2) snapshot(cam3)];
-    else
-        filelist = dir(fullfile('images/problem1.1', '**\*.*'));
-        filelist = filelist(~[filelist.isdir]);  % Borrar directorios
-    end
-    
-    %% 1. Lectura y preprocesado de la imagen
     for i = 1:length(filelist)
+        %% 1. Lectura de la imagen
         file = filelist(i);
         im = imread(fullfile(file.folder, file.name));
         %figure('Name', 'Imagen original'), imshow(im);
         
         %% 2. Detección de la region de la matricula
         imPlate = detectPlateRegionCE(im);
-          
+        %figure('Name', 'Placa recortada'), imshow(imPlate);
+        
         %% 3. Extraer caracteres
         charList = segmentCharacters(imPlate);
     
         %% 4. Identificar caracteres
-        templates = loadTemplates('templates/problem1');
+        [plate, numValids] = recogniseCharacters(charList, file.name(1:6), templates);
         
-        plate = length(charList);
-        recognisedCharacters = 0;
-        for j = 1:length(charList)
-            plate(j) = matchCharacter(charList{j}, templates);
-            if(plate(j) == file.name(j))
-                recognisedCharacters = recognisedCharacters + 1;
-            end
-        end
-        
-        disp([fullfile(file.folder, file.name) ':'])
-        disp([9 'Detected Plate: ' plate ' | Ground Truth: ' file.name ' | Recognised Characters ' num2str(recognisedCharacters)])
-    
+        %% 5. Informar de los resultados
+        disp([fullfile(file.folder, file.name) ':']);
+        disp([9 'Detected Plate: ' plate ' | Ground Truth: ' file.name(1:6) ' | Recognised Characters ' num2str(numValids)]);
     end
-    
     
 end
 
+function filelist = loadFiles(difficulty, mode)
+    if(difficulty == 1)
+        % Entorno controlado
+        if(strcmp(mode, "live"))
+            cam1 = ipcam('http://10.112.11.211/video.mjpg', 'root', 'Vivotek1', 'Timeout', 10);
+            cam2 = ipcam('http://10.112.11.212/video.mjpg', 'root', 'Vivotek2', 'Timeout', 10);
+            cam3 = ipcam('http://10.112.11.213/video.mjpg', 'root', 'Vivotek3', 'Timeout', 10);
+            
+            filelist = [ snapshot(cam1) snapshot(cam2) snapshot(cam3)];
+        else
+            filelist = dir(fullfile('images/problem1.1', '**\*.*'));
+            filelist = filelist(~[filelist.isdir]);
+        end
+    else
+        % Caso real
+        filelist = dir(fullfile('images/problem1.2', '**\*.*'));
+        filelist = filelist(~[filelist.isdir]);
+    end
+end
 
 function imPlate = detectPlateRegionCE(im)
     %% 1. Aplicar filtro de color
@@ -78,17 +79,16 @@ function imPlate = detectPlateRegionCE(im)
     
     % Recortado
     imPlate = imClean(rMin:rMax, cMin:cMax, :);
-    %figure('Name', 'Imagen recortada'), imshow(imPlate);
 end
 
-function templates = loadTemplates(templateDir)
+function templates = loadTemplates(difficulty)
     % Carregar imatges de referència (0-9, A-Z) des de carpeta 'templates'
     symbols = ['0':'9' 'A':'Z'];
     maxSymbols = numel(symbols);
     j = 1;
     for i = 1:maxSymbols
         character = symbols(i);
-        imgPath = fullfile(templateDir, [character '.png']);
+        imgPath = fullfile(['templates/problem1.' num2str(difficulty)], [character '.png']);
         if isfile(imgPath)
             templates.symbols{j} = character;
             templates.images{j}  = im2bw(imresize(imread(imgPath),[42 24]));
@@ -122,5 +122,17 @@ function charList = segmentCharacters(imPlate)
       imChar = imcrop(imPlate, boundingBox);
       charList{i} = imresize(imChar,[42 24]);
       %figure; imshow(imChar);
+    end
+end
+
+
+function [plate, nValids] = recogniseCharacters(charList, groundTruth, templates)
+    plate = length(charList);
+    nValids = 0;
+    for j = 1:length(charList)
+        plate(j) = matchCharacter(charList{j}, templates);
+        if(plate(j) == groundTruth(j))
+            nValids = nValids + 1;
+        end
     end
 end
