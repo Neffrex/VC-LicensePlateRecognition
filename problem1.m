@@ -2,29 +2,36 @@ ex1(2, true)
 
 function []=ex1(difficulty, live)
     filelist = loadFiles(difficulty, live);
-    templates = loadTemplates(difficulty);
 
     for i = 1:length(filelist)
-        %% 1. Lectura de la imagen
         file = filelist(i);
-        im = imread(fullfile(file.folder, file.name));
-        %figure('Name', 'Imagen original'), imshow(im);
-        
-        %% 2. Detección de la region de la matricula
-        imPlate = detectPlateRegion(im, difficulty);
-        %figure('Name', 'Placa recortada'), imshow(imPlate);
-        
-        %% 3. Extraer caracteres
-        charList = segmentCharacters(imPlate);
-    
-        %% 4. Identificar caracteres
-        [plate, numValids] = recogniseCharacters(charList, file.name(1:6), templates);
-        
-        %% 5. Informar de los resultados
-        disp([fullfile(file.folder, file.name) ':']);
-        disp([9 'Detected Plate: ' plate ' | Ground Truth: ' file.name(1:6) ' | Recognised Characters ' num2str(numValids)]);
+        if(difficulty == 1)
+            processFileControlledEnvironment(file);
+        else
+            processFileRealEnvironment(file);
+        end
     end
     
+end
+
+function processFileControlledEnvironment(file)
+    %% 1. Lectura de la imagen
+    im = imread(fullfile(file.folder, file.name));
+    %figure('Name', 'Imagen original'), imshow(im);
+    
+    %% 2. Detección de la region de la matricula
+    imPlate = detectPlateRegionCE(im);
+    %figure('Name', 'Placa recortada'), imshow(imPlate);
+    
+    %% 3. Extraer caracteres
+    charList = segmentCharacters(imPlate);
+
+    %% 4. Identificar caracteres
+    [plate, nValids] = recogniseCharactersCE(charList, file.name(1:6));
+    
+    %% 5. Informar de los resultados
+    disp([fullfile(file.folder, file.name) ':']);
+    disp([9 'Detected Plate: ' plate ' | Ground Truth: ' file.name(1:6) ' | Recognised Characters ' num2str(nValids)]);
 end
 
 function filelist = loadFiles(difficulty, live)
@@ -43,16 +50,6 @@ function filelist = loadFiles(difficulty, live)
     end
 end
 
-
-function imPlate = detectPlateRegion(im, difficulty)
-    if(difficulty == 1)
-        % Controlled Environment (CE)
-        imPlate = detectPlateRegionCE(im);
-    else 
-        % Real Environment (RE)
-        imPlate = detectPlateRegionRE(im);
-    end
-end
 
 function imPlate = detectPlateRegionCE(im)
     %% 1. Aplicar filtro de color
@@ -87,79 +84,61 @@ function imPlate = detectPlateRegionCE(im)
     imPlate = imClean(rMin:rMax, cMin:cMax, :);
 end
 
-function imPlate = detectPlateRegionRE(im)
-    % 1) Conversión a gris y filtrado suave
-    imGray = rgb2gray(im);
-    imGray = medfilt2(imGray, [3 3]);
-    
-    % 2) Detección de bordes más precisa con Canny
-    edges = edge(imGray, 'Canny', [0.05 0.15]);
-    
-    %% 1. Aplicar operaciones morfologicas
-    imGray = rgb2gray(im);
-    imGray = medfilt2(imGray, [3 3]);
-    %figure('Name', 'Imagen de grises'); imshow(imGray);
+function imPlate = processFileRealEnvironment(file)
+    im = imread(fullfile(file.folder, file.name));
 
-    % Apply morphological operations to enhance the detected edges
-    se = strel('disk', 1);
-    imDilated = imdilate(imGray, se);
-    imEroded = imerode(imGray, se);
-    imClean = imsubtract(imDilated, imEroded);
-    imClean = mat2gray(imClean);
-    figure('Name', 'Imagen limpia'); imshow(imClean);
+     % Convertir a espacio HSV para facilitar filtrado de color verde
+    imMasked = colorFilter(im, [0 360], [0 .1], [.9 1]);
+    %showImage('Filtro de blancos', imMasked);
 
-    imClean = imadjust(imClean, [0.2 .7], [0 1]);
-    imClean = bwpropfilt(logical(imClean), 'Area', 20); 
-    figure('Name', 'Imagen limpia'); imshow(imClean);
+    imEdges = edge(rgb2gray(im), "canny");
+    %showImage('Imagen de contornos', imEdges);
+
+    plateBB = greaterBoundingBox(regionprops(imMasked, 'BoundingBox', 'Area'));
+    imDirty = imcrop(imEdges, plateBB);
+    %showImage('Placa sucia', imDirty);
+
+    imFilled = imfill(imDirty, "holes");
+    %showImage('Placa rellena', imFilled);
+
+    imClean = bwpropfilt(imFilled, 'Area', 8); 
+    %showImage('Placa limpia', imClean);
+
+    imPlate = imDirty & imClean;
+    %showImage('Placa arreglada', imPlate);
     
-    %imClean = conv2(imClean, [1 1; 1 1], "same");
-    %imClean = imadjust(imClean, [0.7 1], [0 1]);
-    %imClean = bwpropfilt(logical(imClean), 'Area', 15); 
-    %figure('Name', 'Imagen limpia'); imshow(imClean);
-    
-    %% 2. Recortar la matricula
-    cc = bwconncomp(imClean);
-    Iprops = regionprops(cc, 'BoundingBox', 'Area');
-    
-    bb = Iprops(1).BoundingBox;
-    maxArea = 0;
-    for i=1:numel(Iprops)
-        boundingBox = Iprops(i).BoundingBox;
-        area = Iprops(i).Area;
-        aspectRatio = boundingBox(3) / boundingBox(4);
-        if maxArea < area && aspectRatio > 1.7 && aspectRatio < 2
-           maxArea = area;
-           bb = boundingBox;
-           figure('Name', num2str(area)); imshow(imcrop(imClean, bb));
+
+    [h, ~] = size(imClean);
+
+    stats = regionprops(imClean, 'BoundingBox', 'Area', 'Image');
+    j = 1;
+    for i=1:numel(stats)
+        subImWidth  = length(stats(i).Image(1,:));
+        subImHeight = length(stats(i).Image(:,1));
+        if subImWidth<(h/2) & subImHeight>(h/3)
+            imChar = imcrop(imPlate, stats(i).BoundingBox);
+            charList{j} = imresize(imChar,[42 24]);
+            
+            [name, figure] = showImage([file.name(1:6) '-' num2str(j)], charList{j});
+            saveas(figure, ['figures/' name '.png']);
+            j = j + 1;
         end
     end
     
-    imPlate = imcrop(imClean, bb);
-    imPlate = bwareaopen(~imPlate, 500);
-    [h, ~] = size(imPlate);
-
-    Iprops=regionprops(imClean,'BoundingBox', 'Area', 'Image');
-    count = numel(Iprops);
-    %noPlate=[];
-    for i=1:count
-        ow = length(Iprops(i).Image(1,:));
-        oh = length(Iprops(i).Image(:,1));
-        if ow<(h/2) & oh>(h/3)
-            figure('Name', ['Letter' i]); imshow(Iprops(i).Image);
-        end
-    end
-
-    pause
+    [plate, nValids] = recogniseCharactersRE(charList, file.name(1:6));
+    
+    disp([fullfile(file.folder, file.name) ':']);
+    disp([9 'Detected Plate: ' plate ' | Ground Truth: ' file.name(1:6) ' | Recognised Characters ' num2str(nValids)]);
 end
 
-function templates = loadTemplates(difficulty)
+function templates = loadTemplates(path)
     % Carregar imatges de referència (0-9, A-Z) des de carpeta 'templates'
     symbols = ['0':'9' 'A':'Z'];
     maxSymbols = numel(symbols);
     j = 1;
     for i = 1:maxSymbols
         character = symbols(i);
-        imgPath = fullfile(['templates/problem1-' num2str(difficulty)], [character '.png']);
+        imgPath = fullfile(path, [character '.png']);
         if isfile(imgPath)
             templates.symbols{j} = character;
             templates.images{j}  = im2bw(imresize(imread(imgPath),[42 24]));
@@ -183,7 +162,8 @@ function bestChar = matchCharacter(charImg, templates)
     end
 end
 
-function charList = segmentCharacters(imPlate)
+
+function charList = segmentCharactersCE(imPlate)
     cc = bwconncomp(imPlate);
     Iprops = regionprops(cc, 'BoundingBox', 'Area');
     count = numel(Iprops);
@@ -197,7 +177,8 @@ function charList = segmentCharacters(imPlate)
 end
 
 
-function [plate, nValids] = recogniseCharacters(charList, groundTruth, templates)
+function [plate, nValids] = recogniseCharactersCE(charList, groundTruth)
+    loadTemplates('templates/problem1-1')
     plate = length(charList);
     nValids = 0;
     for j = 1:length(charList)
@@ -206,4 +187,56 @@ function [plate, nValids] = recogniseCharacters(charList, groundTruth, templates
             nValids = nValids + 1;
         end
     end
+end
+
+function [plate, nValids] = recogniseCharactersRE(charList, groundTruth)
+    numberTemplates = loadTemplates('templates/problem1-2/numbers');
+    alphaTemplates  = loadTemplates('templates/problem1-2/alpha');
+
+    plateLength = length(charList);
+    nValids = 0;
+    for j = 1:plateLength
+        if(j <= plateLength/2)
+            template = numberTemplates;
+        else
+            template = alphaTemplates;
+        end
+        
+        plate(j) = matchCharacter(charList{j}, template);
+        if(plate(j) == groundTruth(j))
+            nValids = nValids + 1;
+        end
+    end
+end
+
+function imMasked = colorFilter(im, hRange, sRange, vRange)
+    imHSV = rgb2hsv(im);
+    h = imHSV(:,:,1);  % canal Hue
+    s = imHSV(:,:,2);  % canal Saturation
+    v = imHSV(:,:,3);  % canal Value
+
+    % Aplicar la mascara
+    imMasked = (hRange(1)<=h & h<=hRange(2)) & (sRange(1)<=s & s<=sRange(2)) & (vRange(1)<=v & v<=vRange(2));
+
+end
+
+
+function bb = greaterBoundingBox(stats)
+    bb = stats(1).BoundingBox;
+    maxArea = 0;
+    count=numel(stats);
+    for i=1:count
+        boundingBox = stats(i).BoundingBox;
+        area = stats(i).Area;
+        if maxArea < area
+           maxArea = area;
+           bb = boundingBox;
+        end
+    end
+end
+
+
+function [name, fig]=showImage(name, im)
+    fig = figure('Name', name);
+    imshow(im);
 end
